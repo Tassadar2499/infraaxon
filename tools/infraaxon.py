@@ -53,6 +53,7 @@ def request(path, body=None, method=None):
 
 def seed_registration():
     conf = configuration()
+    web_urls = json.loads((ROOT / "examples/shop/web-urls.json").read_text())
     envs = request("/environments")
     env = next((e for e in envs if e["name"] == "Shop demo"), None)
     if not env:
@@ -116,6 +117,7 @@ def seed_registration():
                     "name": name,
                     "type": kind,
                     "endpoint": endpoint,
+                    "web_url": web_urls.get(name, ""),
                     "settings": settings,
                     "secrets": credentials,
                     "enabled": True,
@@ -126,6 +128,7 @@ def seed_registration():
             c = existing[name]
             body = {k: c[k] for k in ["name", "type", "endpoint", "description", "settings", "enabled", "dependencies"]}
             body.update(endpoint=endpoint, settings=settings, secrets=credentials)
+            body["web_url"] = c.get("web_url", web_urls.get(name, ""))
             existing[name] = request(f"/components/{c['id']}", body, "PUT")
     links = {
         "Catalog": ["MongoDB", "Redis", "Images"],

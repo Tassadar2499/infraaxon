@@ -144,10 +144,13 @@ def create_app(store=None):
             db().decrypt(existing["encrypted_secrets"]) if existing else {"_agent_token": secrets.token_urlsafe(32)}
         )
         credentials.update(body.secrets)
+        fields = body.model_dump(exclude={"secrets"})
+        if existing and "web_url" not in body.model_fields_set:
+            fields["web_url"] = existing.get("web_url", "")
         c = {
             "id": id,
             "environment_id": env_id,
-            **body.model_dump(exclude={"secrets"}),
+            **fields,
             "encrypted_secrets": db().encrypt(credentials),
             "updated_at": now(),
             "agent_state": "pending" if body.enabled else "disabled",

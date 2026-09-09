@@ -57,6 +57,41 @@ def test_cross_environment_dependency_rejected(client):
     assert component(client, b, dependencies=[ca]).status_code == 422
 
 
+def test_component_web_url_lifecycle_and_legacy_updates(client):
+    eid = env(client)
+    url = "https://grafana.example.test:8443/d/main?orgId=1#panel"
+    created = component(client, eid, web_url=url)
+    assert created.status_code == 201
+    c = created.json()
+    assert c["web_url"] == url
+    body = {k: c[k] for k in ("name", "type", "endpoint", "description", "settings", "enabled", "dependencies")}
+    path = f"/api/components/{c['id']}"
+    assert client.put(path, json=body).json()["web_url"] == url
+    replacement = "http://localhost:13000"
+    assert client.put(path, json={**body, "web_url": replacement}).json()["web_url"] == replacement
+    assert client.get(f"/api/environments/{eid}/components").json()[0]["web_url"] == replacement
+    assert client.put(path, json={**body, "web_url": ""}).json()["web_url"] == ""
+    assert client.put(path, json=body).json()["web_url"] == ""
+
+    # Simulate a record written before web_url existed.
+    stored = client.store.get("component", c["id"])
+    stored.pop("web_url")
+    client.store.put("component", stored)
+    assert client.get(f"/api/environments/{eid}/components").status_code == 200
+    assert client.put(path, json=body).json()["web_url"] == ""
+    assert component(client, eid).json()["web_url"] == ""
+
+
+@pytest.mark.parametrize("url", [
+    "javascript:alert(1)", "data:text/html,test", "ftp://example.test", "/relative", "//example.test",
+    "http://", "http://user:password@example.test", "https://user@example.test", "http://example.test:99999",
+    "http://example.test\n/path", "http://exa mple.test", "http://example.test\\@evil.test",
+])
+def test_component_rejects_invalid_web_urls(client, url):
+    eid = env(client)
+    assert component(client, eid, web_url=url).status_code == 422
+
+
 def test_self_dependency_rejected(client):
     id = env(client)
     c = component(client, id).json()

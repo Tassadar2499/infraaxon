@@ -310,6 +310,11 @@ export interface components {
             /** Endpoint */
             endpoint: string;
             /**
+             * Web Url
+             * @default
+             */
+            web_url: string;
+            /**
              * Description
              * @default
              */

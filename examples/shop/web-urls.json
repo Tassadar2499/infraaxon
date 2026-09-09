@@ -1,0 +1,12 @@
+{
+  "Catalog": "http://localhost:18081",
+  "Orders": "http://localhost:18081",
+  "Images": "http://localhost:19001",
+  "Logs": "http://localhost:15601",
+  "Kibana": "http://localhost:15601",
+  "Prometheus": "http://localhost:19090",
+  "Grafana": "http://localhost:13000",
+  "OpenProject": "http://localhost:18083",
+  "Wiki.js": "http://localhost:18084",
+  "Mattermost": "http://localhost:18085"
+}

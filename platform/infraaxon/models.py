@@ -28,11 +28,35 @@ class ComponentInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     type: str
     endpoint: str = Field(min_length=3, max_length=2048)
+    web_url: str = Field(default="", max_length=2048)
     description: str = Field(default="", max_length=16000)
     settings: dict[str, Any] = Field(default_factory=dict)
     secrets: dict[str, str] = Field(default_factory=dict)
     dependencies: list[str] = Field(default_factory=list, max_length=30)
     enabled: bool = False
+
+    @field_validator("web_url")
+    @classmethod
+    def valid_web_url(cls, value):
+        if not value:
+            return value
+        try:
+            url = urlsplit(value)
+            port = url.port
+            valid = (
+                url.scheme in {"http", "https"}
+                and url.hostname
+                and url.username is None
+                and url.password is None
+                and (port is None or port > 0)
+                and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+                and "\\" not in value
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Use an absolute HTTP/HTTPS web URL without credentials")
+        return value
 
     @field_validator("type")
     @classmethod

@@ -707,6 +707,12 @@
             "minLength": 3,
             "title": "Endpoint"
           },
+          "web_url": {
+            "type": "string",
+            "maxLength": 2048,
+            "title": "Web Url",
+            "default": ""
+          },
           "description": {
             "type": "string",
             "maxLength": 16000,

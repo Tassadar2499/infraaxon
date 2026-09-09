@@ -28,6 +28,10 @@ docker compose -f compose.yaml -f compose.gpu.yaml up -d
 
 Create an environment, select an adapter, enter a reachable endpoint, provide narrowly scoped credentials, then enable the agent. Configure dependencies by editing a component. Credentials may be left blank when editing to retain the saved values. Periodic observations run every 30 seconds. Stale heartbeat and target availability are separate states.
 
+Set the optional **Адрес веб-интерфейса** field to the HTTP/HTTPS address reachable from your browser. Cards and component details show **Открыть сервис ↗**, which opens that address in a new tab. The agent still uses Endpoint for diagnostics. Clear the web address to hide the link. URLs must not contain credentials.
+
+Shop registration uses `examples/shop/web-urls.json` for local web addresses and preserves existing values, including deliberately cleared links. Components without a published web interface have no default link.
+
 ## Independent shop example
 
 ```sh
