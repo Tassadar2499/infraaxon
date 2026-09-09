@@ -30,6 +30,10 @@ One run per access-path outage, temperature zero, default model configuration:
 
 All three produced schema-valid responses referencing existing evidence. This verifies the diagnostic pipeline, not root-cause accuracy. For example, the S3 response suggested configuration as a hypothesis even though the injected cause was a network path outage. Additional observations would be necessary to distinguish those explanations. `completed` describes a finished investigation; the assessment itself can remain `inconclusive`.
 
+A separate dependency experiment consulted the order worker, Kafka and MongoDB and completed in 328 seconds. All three observations were collected while the injected 300-second MongoDB access delay was active; synthesis finished after fault expiry. The MongoDB observation took about nine seconds. The result was inconclusive and did not establish the injected network delay as the root cause; some hypotheses overinterpreted normal database monitoring operations. This is a limitation of diagnostic quality, despite successful orchestration. The final coordinator also passes the declared dependency graph into synthesis; no accuracy improvement from that addition is claimed here.
+
+GitHub Actions passed the Python suite, both frontend builds, C# tests and all three service builds for the initial implementation commit: [validation run](https://github.com/Tassadar2499/infraaxon/actions/runs/34387702765).
+
 Early development runs exposed invalid local-model tool-call formatting; the agent now validates a final assessment wrapped in tool arguments as data and never executes it. A regression test covers this behavior. Earlier failed runs remain in local history rather than being relabelled as successful.
 
 ## Reproduce
