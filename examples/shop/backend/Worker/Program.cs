@@ -24,6 +24,8 @@ class Processor(WorkerState state,ILogger<Processor> logger):BackgroundService
             try{
                 if(state.PausedUntil>DateTime.UtcNow){await Task.Delay(500,stop);continue;}
                 var item=consumer.Consume(TimeSpan.FromSeconds(1));if(item is null)continue;
+                // Pause can arrive while Consume is waiting; keep the fetched event uncommitted.
+                while(state.PausedUntil>DateTime.UtcNow)await Task.Delay(200,stop);
                 ActivityContext.TryParse(Common.TraceParent(item.Message.Headers),null,out var parent);
                 using var span=Common.Activities.StartActivity("kafka.orders.process",ActivityKind.Consumer,parent);
                 try{
