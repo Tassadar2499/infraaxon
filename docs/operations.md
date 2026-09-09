@@ -62,6 +62,18 @@ Open the experiments page with `SCENARIO_KEY` from `.env`. Start one fault, crea
 
 All Kafka clients use the advertised Toxiproxy listener, so failure injection also affects connections opened after metadata discovery. The Kafka-outage scenario represents a broker access-path outage, not a producer-only fault. The registered MongoDB, Redis and S3 agents probe the same proxy paths as the shop. A failed path is not proof that the underlying native server has stopped. Register a second component with the native endpoint to compare paths.
 
+## Populate a browsable demonstration
+
+After the shop and collaboration bootstrap have completed, run:
+
+```sh
+.venv/bin/python tools/populate_demo.py
+```
+
+This takes approximately two minutes of real shop traffic plus service setup. It creates 48 idempotent demonstration orders, seven Wiki.js pages, 12 OpenProject tasks and 12 Mattermost posts. It also populates the `infraaxon_demo` PostgreSQL schema, `infraaxon:demo:*` Redis keys and eight files in the `infraaxon-demo` MinIO bucket. Existing records are retained; repeated runs reuse the same order and fixture identities.
+
+Grafana's infrastructure overview shows real counters from that traffic. Kibana provides separate data views for live logs, live traces and 180 explicitly labelled synthetic historical events. Synthetic events are examples, not evidence of a current failure. Start the guided tour at `http://localhost:18084/en/demo/overview`. A count summary is saved to the ignored `artifacts/demo-data.json` file.
+
 ## Shutdown and recovery
 
 ```sh
