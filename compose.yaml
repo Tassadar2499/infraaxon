@@ -1,0 +1,54 @@
+name: infraaxon
+services:
+  platform:
+    build: {context: ., dockerfile: platform/Dockerfile}
+    image: infraaxon-agent:0.1.0
+    environment:
+      PLATFORM_KEY: ${PLATFORM_KEY:?Run tools/infraaxon.py init}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Run tools/infraaxon.py init}
+      LLM_KEY: ${LLM_KEY:?Run tools/infraaxon.py init}
+      LLM_URL: http://litellm:4000/v1
+      DATABASE_PATH: /data/platform.db
+    volumes: [platform-data:/data]
+    ports: ["127.0.0.1:18000:8000"]
+    networks: [agents]
+    restart: unless-stopped
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"], interval: 10s, timeout: 5s, retries: 10}
+  web:
+    build: {context: ., dockerfile: web/Dockerfile}
+    ports: ["127.0.0.1:18080:80"]
+    depends_on: {platform: {condition: service_healthy}}
+    networks: [agents]
+    restart: unless-stopped
+  provisioner:
+    image: infraaxon-agent:0.1.0
+    user: "0:0"
+    command: [python, -m, infraaxon.provisioner]
+    environment:
+      PLATFORM_KEY: ${PLATFORM_KEY}
+      LLM_KEY: ${LLM_KEY}
+      INSTALLATION_ID: infraaxon-local
+      AGENT_NETWORK: infraaxon-agents
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    depends_on: {platform: {condition: service_healthy}}
+    networks: [agents]
+    restart: unless-stopped
+  ollama:
+    image: ollama/ollama:0.11.10
+    environment: {OLLAMA_NUM_PARALLEL: "1", OLLAMA_MAX_LOADED_MODELS: "1", OLLAMA_CONTEXT_LENGTH: "16384"}
+    volumes: [ollama-data:/root/.ollama]
+    networks: [agents]
+    restart: unless-stopped
+  litellm:
+    image: ghcr.io/berriai/litellm:main-v1.76.1-stable
+    command: ["--config", /app/config.yaml, "--port", "4000"]
+    environment: {LITELLM_MASTER_KEY: "${LLM_KEY}", LITELLM_TELEMETRY: "False"}
+    volumes: [./deploy/litellm.yaml:/app/config.yaml:ro]
+    depends_on: [ollama]
+    networks: [agents]
+    restart: unless-stopped
+networks:
+  agents: {name: infraaxon-agents}
+volumes:
+  platform-data:
+  ollama-data:

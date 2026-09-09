@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.venv
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/__pycache__
+.cache
+.tools
+data
+test-results

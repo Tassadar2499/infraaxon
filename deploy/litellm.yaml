@@ -1,0 +1,12 @@
+model_list:
+  - model_name: infra-diagnostics
+    litellm_params:
+      model: ollama_chat/qwen3:8b
+      api_base: http://ollama:11434
+      timeout: 180
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+litellm_settings:
+  telemetry: false
+  drop_params: true
+  request_timeout: 180

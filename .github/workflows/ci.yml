@@ -1,0 +1,31 @@
+name: checks
+on: [push, pull_request]
+jobs:
+  platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: '3.12'}
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+  frontends:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {directory: [web, examples/shop/frontend]}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm ci && npm run build
+        working-directory: ${{ matrix.directory }}
+  shop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: {dotnet-version: '10.0.x'}
+      - run: dotnet test examples/shop/backend/Tests/Tests.csproj -c Release -p:RestoreLockedMode=true
+      - run: dotnet build examples/shop/backend/Catalog/Catalog.csproj -c Release -p:RestoreLockedMode=true
+      - run: dotnet build examples/shop/backend/Orders/Orders.csproj -c Release -p:RestoreLockedMode=true
+      - run: dotnet build examples/shop/backend/Worker/Worker.csproj -c Release -p:RestoreLockedMode=true
