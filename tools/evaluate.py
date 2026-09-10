@@ -59,7 +59,7 @@ def main():
                     else f"/components/{component['id']}/diagnoses"
                 )
                 job = request(path, body)
-                while job["status"] in {"queued", "running"} and time.monotonic() - started < 660:
+                while job["status"] in {"queued", "running"} and time.monotonic() - started < 1260:
                     time.sleep(2)
                     job = request("/investigations/" + job["id"])
                 if job["status"] in {"queued", "running"}:

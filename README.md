@@ -11,7 +11,7 @@ The name combines **infrastructure** and **axon**, the part of a neuron that car
 - Vue 3 / TypeScript / Vite console: environments, component registry, dependency graph, agent status, investigations, evidence and export.
 - Python / FastAPI platform and agents; encrypted connector credentials and durable SQLite history independent of monitored infrastructure.
 - One agent container per enabled component, provisioned automatically on the local Docker host.
-- Shared **LiteLLM → Ollama → Qwen3 8B** inference. Agents specialize through tools and context, without separate model weights or fine-tuning.
+- Shared **LiteLLM → Ollama → Qwen3 8B** inference. Versioned profiles specialize agents through roles, named read checks and linked context, without separate model weights or fine-tuning.
 - Read adapters for MongoDB, Redis, S3/MinIO, Kafka, HTTP applications, PostgreSQL, Elasticsearch, Kibana, Prometheus, Grafana, OpenProject, Wiki.js and Mattermost.
 - Bounded read tools, evidence references, unavailable-source handling, streamed progress and cancellation. No automatic remediation.
 
@@ -51,7 +51,7 @@ The store runs at **http://localhost:18081**. Use **http://localhost:18090** wit
 - [Validation results and model limitations](docs/validation.md)
 - [OpenAPI snapshot](docs/openapi.json); live API at http://localhost:18000/docs
 
-This is a working local PoC, not a production service or a measured root-cause accuracy guarantee. The coordinator selects at most four agents; routing and context retrieval are deliberately simple.
+This is a working local PoC, not a production service or a measured root-cause accuracy guarantee. The coordinator collects baseline observations without inference, selects at most six specialists and consults at most eight linked context sources. See [agent profiles](docs/agent-profiles.md).
 
 ## License
 

@@ -8,3 +8,5 @@ scrape_configs:
     static_configs: [{targets: ['redis-exporter:9121']}]
   - job_name: kafka
     static_configs: [{targets: ['kafka-exporter:9308']}]
+  - job_name: otel
+    static_configs: [{targets: ['otel:8888']}]

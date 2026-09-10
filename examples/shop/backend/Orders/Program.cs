@@ -15,6 +15,11 @@ app.UseExceptionHandler(handler=>handler.Run(async context=>{context.Response.St
 var orders=app.Services.GetRequiredService<IMongoCollection<Order>>();
 await orders.Indexes.CreateOneAsync(new CreateIndexModel<Order>(Builders<Order>.IndexKeys.Ascending(o=>o.IdempotencyKey),new CreateIndexOptions{Unique=true}));
 app.MapGet("/health",async()=>new {status="ok",service="shop-orders",outboxPending=await orders.CountDocumentsAsync(o=>!o.OutboxSent)});
+app.MapGet("/internal/diagnostics",async()=>{
+    var pending=await orders.CountDocumentsAsync(o=>!o.OutboxSent);
+    var oldest=await orders.Find(o=>!o.OutboxSent).SortBy(o=>o.CreatedAt).Project(o=>(DateTime?)o.CreatedAt).FirstOrDefaultAsync();
+    return Results.Ok(new {service="shop-orders",outboxPending=pending,oldestPendingAt=oldest,oldestPendingAgeSeconds=oldest.HasValue?(double?)Math.Max(0,(DateTime.UtcNow-oldest.Value).TotalSeconds):null,observedAt=DateTime.UtcNow});
+});
 app.MapPost("/api/orders",async(Checkout checkout,HttpRequest request,IHttpClientFactory factory)=>{
     if(!Pricing.Valid(checkout))return Results.BadRequest(new {error="Invalid checkout"});
     var key=request.Headers["Idempotency-Key"].ToString();

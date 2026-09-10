@@ -51,11 +51,13 @@ def request(path, body=None, method=None):
         return json.load(response)
 
 
-def seed_registration():
+def seed_registration(dry_run=False):
     conf = configuration()
     web_urls = json.loads((ROOT / "examples/shop/web-urls.json").read_text())
     envs = request("/environments")
     env = next((e for e in envs if e["name"] == "Shop demo"), None)
+    if not env and dry_run:
+        env = {"id": "", "name": "Shop demo"}
     if not env:
         env = request(
             "/environments",
@@ -108,45 +110,95 @@ def seed_registration():
                 {"token": conf.get("MATTERMOST_API_TOKEN", "")},
             ),
         ]
-    existing = {c["name"]: c for c in request(f"/environments/{env['id']}/components")}
+    from shop_agents import EXTRA_COMPONENTS, PROFILES, DEPENDENCIES, QUERIES, context_links, merge_settings
+
+    defs += EXTRA_COMPONENTS
+    profiles = {p["id"]: p for p in request("/agent-profiles")}
+    existing = {c["name"]: c for c in request(f"/environments/{env['id']}/components")} if env["id"] else {}
+    preview = []
     for name, kind, endpoint, settings, credentials in defs:
-        if name not in existing:
-            existing[name] = request(
-                f"/environments/{env['id']}/components",
-                {
-                    "name": name,
-                    "type": kind,
-                    "endpoint": endpoint,
-                    "web_url": web_urls.get(name, ""),
-                    "settings": settings,
-                    "secrets": credentials,
-                    "enabled": True,
-                    "description": "Shop demonstration component. Investigate live observations, not predefined incident labels.",
-                },
-            )
+        profile = profiles[PROFILES[name]]
+        defaults = merge_settings(profile["settings"], settings)
+        if name == "Prometheus":
+            defaults["queries"] = QUERIES
+        if name == "LiteLLM":
+            credentials = {"token": conf["LLM_KEY"]}
+        c = existing.get(name)
+        if c:
+            body = {
+                k: c.get(k, [] if k == "context_sources" else "")
+                for k in [
+                    "name",
+                    "type",
+                    "endpoint",
+                    "web_url",
+                    "description",
+                    "settings",
+                    "enabled",
+                    "dependencies",
+                    "agent_profile",
+                    "context_sources",
+                ]
+            }
+            # Only replace the original generic demo description and default profile.
+            if not body["agent_profile"] or body["agent_profile"] == kind:
+                body["agent_profile"] = profile["id"]
+            if not body["description"] or body["description"].startswith("Shop demonstration component."):
+                body["description"] = profile["instructions"]
+            body["settings"] = merge_settings(defaults, c["settings"])
+            # Existing secrets are intentionally preserved by omitting them.
         else:
-            c = existing[name]
-            body = {k: c[k] for k in ["name", "type", "endpoint", "description", "settings", "enabled", "dependencies"]}
-            body.update(endpoint=endpoint, settings=settings, secrets=credentials)
-            body["web_url"] = c.get("web_url", web_urls.get(name, ""))
+            body = {
+                "name": name,
+                "type": kind,
+                "endpoint": endpoint,
+                "web_url": web_urls.get(name, ""),
+                "settings": defaults,
+                "secrets": credentials,
+                "enabled": True,
+                "description": profile["instructions"],
+                "agent_profile": profile["id"],
+                "context_sources": [],
+                "dependencies": [],
+            }
+        changed = [key for key in body if key != "secrets" and (not c or body[key] != c.get(key))]
+        preview.append(
+            {
+                "component": name,
+                "operation": "create" if not c else "update" if changed else "preserve",
+                "profile": body["agent_profile"],
+                "fields": changed,
+                "dependencies": DEPENDENCIES.get(name, []),
+            }
+        )
+        if dry_run:
+            existing[name] = {**body, "id": c["id"] if c else "planned:" + name}
+        elif not c:
+            existing[name] = request(f"/environments/{env['id']}/components", body)
+        elif changed:
             existing[name] = request(f"/components/{c['id']}", body, "PUT")
-    links = {
-        "Catalog": ["MongoDB", "Redis", "Images"],
-        "Orders": ["Catalog", "MongoDB", "Kafka"],
-        "Order worker": ["Kafka", "MongoDB"],
-        "Kibana": ["Logs"],
-        "Grafana": ["Prometheus"],
-        "OpenProject": ["PostgreSQL"],
-        "Wiki.js": ["PostgreSQL"],
-        "Mattermost": ["PostgreSQL"],
-    }
-    for name, deps in links.items():
-        if name in existing:
-            c = existing[name]
-            body = {k: c[k] for k in ["name", "type", "endpoint", "description", "settings", "enabled"]}
-            body["dependencies"] = [existing[d]["id"] for d in deps]
-            request(f"/components/{c['id']}", body, "PUT")
-    print("Shop registered through the public API. Console: http://localhost:18080")
+    for name, _, _, _, _ in defs:
+        c = existing[name]
+        body = {
+            k: c[k]
+            for k in ["name", "type", "endpoint", "description", "settings", "enabled", "web_url", "agent_profile"]
+        }
+        body["dependencies"] = list(
+            dict.fromkeys(
+                c.get("dependencies", []) + [existing[d]["id"] for d in DEPENDENCIES.get(name, []) if d in existing]
+            )
+        )
+        links = list(c.get("context_sources", []))
+        for link in context_links(name, existing):
+            if link not in links:
+                links.append(link)
+        body["context_sources"] = links
+        if body["dependencies"] != c.get("dependencies", []) or links != c.get("context_sources", []):
+            next(row for row in preview if row["component"] == name)["links_changed"] = True
+            if not dry_run:
+                request(f"/components/{c['id']}", body, "PUT")
+    print(json.dumps(preview, ensure_ascii=False, indent=2))
+    print("Preview only" if dry_run else "Specialized shop agents registered through the public API.")
 
 
 def main():
@@ -154,6 +206,7 @@ def main():
     parser.add_argument(
         "command", choices=["init", "doctor", "up", "shop", "full", "model", "register-shop", "down", "reset-scenarios"]
     )
+    parser.add_argument("--dry-run", action="store_true", help="Preview registration without changes")
     args = parser.parse_args()
     if args.command == "init":
         path = ROOT / ".env"
@@ -191,7 +244,7 @@ def main():
     elif args.command == "model":
         compose("exec", "-T", "ollama", "ollama", "pull", "qwen3:8b")
     elif args.command == "register-shop":
-        seed_registration()
+        seed_registration(dry_run=args.dry_run)
     elif args.command == "down":
         # Provisioned agents live outside Compose; stop only this installation's containers.
         ids = subprocess.check_output(

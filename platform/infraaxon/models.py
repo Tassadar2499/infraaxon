@@ -1,5 +1,5 @@
 from typing import Any, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from urllib.parse import urlsplit
 
 TYPES = {
@@ -24,6 +24,26 @@ class EnvironmentInput(BaseModel):
     description: str = Field(default="", max_length=8000)
 
 
+class ContextSource(BaseModel):
+    model_config = {"extra": "forbid"}
+    component_id: str
+    service_name: str = Field(default="", max_length=120)
+    query: str = Field(default="", max_length=500)
+    check_name: str = Field(default="", max_length=120)
+
+
+class AgentProfile(BaseModel):
+    id: str
+    version: int
+    type: str
+    name: str
+    instructions: str
+    keywords: list[str]
+    actions: list[str]
+    initial_checks: list[dict[str, str]]
+    settings: dict[str, Any]
+
+
 class ComponentInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     type: str
@@ -34,6 +54,34 @@ class ComponentInput(BaseModel):
     secrets: dict[str, str] = Field(default_factory=dict)
     dependencies: list[str] = Field(default_factory=list, max_length=30)
     enabled: bool = False
+    agent_profile: str = ""
+    context_sources: list[ContextSource] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def compatible_profile(self):
+        from .profiles import resolve, settings_for
+
+        resolve(self.model_dump())
+        for key in ("checks", "queries", "check_ports"):
+            if not isinstance(self.settings.get(key, {}), dict):
+                raise ValueError("Named checks and queries must be objects")
+        settings = settings_for(self.model_dump())
+        for port in settings.get("check_ports", {}).values():
+            if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+                raise ValueError("Invalid check port")
+        for name, path in settings.get("checks", {}).items():
+            if (
+                not isinstance(name, str)
+                or not isinstance(path, str)
+                or not path.startswith("/")
+                or path.startswith("//")
+                or "\\" in path
+                or any(ord(c) < 32 for c in path)
+            ):
+                raise ValueError("Checks must be named local HTTP paths")
+        if any(not isinstance(v, str) or len(v) > 4000 for v in settings.get("queries", {}).values()):
+            raise ValueError("Invalid named metrics query")
+        return self
 
     @field_validator("web_url")
     @classmethod
@@ -96,6 +144,22 @@ class DiagnosisInput(BaseModel):
     component_id: str | None = None
     time_window_minutes: int = Field(default=15, ge=1, le=1440)
     trace_id: str | None = Field(default=None, max_length=128)
+
+
+class ObservationInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    action: str = "inspect"
+    query: str = Field(default="", max_length=500)
+    page_id: int | None = Field(default=None, ge=1)
+    check_name: str = Field(default="", max_length=120)
+    service_name: str = Field(default="", max_length=120)
+    time_window_minutes: int = Field(default=15, ge=1, le=1440)
+    trace_id: str | None = Field(default=None, max_length=128)
+
+
+class AgentDiagnosisInput(DiagnosisInput):
+    initial_evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    context_evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=60)
 
 
 class Hypothesis(BaseModel):

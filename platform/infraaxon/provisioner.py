@@ -5,6 +5,31 @@ import time
 import logging
 import docker
 import httpx
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+STATE = {"last_success": None, "error": "Starting", "desired": 0, "running": 0, "missing": []}
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in {"/health", "/diagnostics"}:
+            self.send_error(404)
+            return
+        state = dict(STATE)
+        age = time.time() - state["last_success"] if state["last_success"] else None
+        healthy = age is not None and age < 30 and not state["error"] and not state["missing"]
+        payload = json.dumps({**state, "age_seconds": age, "healthy": healthy}).encode()
+        self.send_response(200 if healthy else 503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -57,6 +82,8 @@ def reconcile(client, desired):
 
 def main():
     client = docker.from_env()
+    server = ThreadingHTTPServer(("0.0.0.0", 8000), HealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     while True:
         try:
             r = httpx.get(
@@ -65,8 +92,21 @@ def main():
                 timeout=10,
             )
             r.raise_for_status()
-            reconcile(client, r.json())
+            desired = r.json()
+            reconcile(client, desired)
+            owned = client.containers.list(
+                filters={"label": "io.infraaxon.owner=" + os.getenv("INSTALLATION_ID", "infraaxon-local")}
+            )
+            running = {c.labels.get("io.infraaxon.component") for c in owned}
+            STATE.update(
+                last_success=time.time(),
+                error=None,
+                desired=len(desired),
+                running=len(running),
+                missing=[c["id"] for c in desired if c["id"] not in running],
+            )
         except Exception as exc:
+            STATE["error"] = type(exc).__name__
             logging.warning("Agent reconciliation retry: %s", type(exc).__name__)
         time.sleep(10)
 

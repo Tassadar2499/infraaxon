@@ -10,10 +10,12 @@ from fastapi import FastAPI, HTTPException, Request, Depends, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
-from .models import ComponentInput, EnvironmentInput, DiagnosisInput, TYPES
+from .models import ComponentInput, EnvironmentInput, DiagnosisInput, TYPES, AgentProfile, ObservationInput
 from .store import configured_store, public_component
 from .adapters import observe
 from .llm import synthesize
+from .profiles import all_profiles, resolve
+from .routing import rank_components, context_requests
 
 DIAGNOSES = Counter("infraaxon_investigations_total", "Investigations started")
 
@@ -96,6 +98,38 @@ def create_app(store=None):
     def metrics():
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+    @app.get("/internal/diagnostics")
+    def diagnostics(request: Request):
+        token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        allowed = any(
+            c.get("enabled")
+            and resolve(c)["id"] == "platform"
+            and secrets.compare_digest(token, db().decrypt(c["encrypted_secrets"])["_agent_token"])
+            for c in db().all("component")
+        )
+        if not allowed:
+            raise HTTPException(401)
+        jobs, components = db().all("investigation"), db().all("component")
+        return {
+            "sqlite": "readable",
+            "jobs": {
+                state: sum(j["status"] == state for j in jobs) for state in ("queued", "running", "failed", "partial")
+            },
+            "agents": [
+                {
+                    "name": c["name"],
+                    "enabled": c["enabled"],
+                    "last_seen": c.get("last_seen"),
+                    "state": c.get("agent_state"),
+                }
+                for c in components
+            ],
+        }
+
+    @app.get("/api/agent-profiles", dependencies=[Depends(authorize)])
+    def agent_profiles() -> list[AgentProfile]:
+        return list(all_profiles().values())
+
     @app.get("/api/adapter-types", dependencies=[Depends(authorize)])
     def adapters():
         settings = {
@@ -140,11 +174,33 @@ def create_app(store=None):
             target = component(dependency)
             if dependency == id or target["environment_id"] != env_id:
                 raise HTTPException(422, "Dependencies must be other components in the same environment")
+        if (
+            existing
+            and existing["type"] != body.type
+            and body.type not in {"elasticsearch", "prometheus", "wikijs", "openproject", "mattermost"}
+        ):
+            if any(
+                any(link["component_id"] == id for link in other.get("context_sources", []))
+                for other in db().all("component")
+            ):
+                raise HTTPException(422, "Component is used as a context source")
+        for source in body.context_sources:
+            target = component(source.component_id)
+            if source.component_id == id or target["environment_id"] != env_id:
+                raise HTTPException(422, "Context sources must be other components in the same environment")
+            if target["type"] not in {"elasticsearch", "prometheus", "wikijs", "openproject", "mattermost"}:
+                raise HTTPException(422, "Unsupported context source type")
         credentials = (
             db().decrypt(existing["encrypted_secrets"]) if existing else {"_agent_token": secrets.token_urlsafe(32)}
         )
         credentials.update(body.secrets)
         fields = body.model_dump(exclude={"secrets"})
+        for key in ("agent_profile", "context_sources"):
+            if existing and key not in body.model_fields_set:
+                fields[key] = existing.get(key, "" if key == "agent_profile" else [])
+        if existing and existing["type"] != body.type and "agent_profile" not in body.model_fields_set:
+            fields["agent_profile"] = body.type
+        fields["agent_profile"] = fields.get("agent_profile") or body.type
         if existing and "web_url" not in body.model_fields_set:
             fields["web_url"] = existing.get("web_url", "")
         c = {
@@ -173,6 +229,9 @@ def create_app(store=None):
         for c in db().all("component"):
             if id in c["dependencies"]:
                 c["dependencies"].remove(id)
+                db().put("component", c)
+            if any(link["component_id"] == id for link in c.get("context_sources", [])):
+                c["context_sources"] = [link for link in c["context_sources"] if link["component_id"] != id]
                 db().put("component", c)
         return {"ok": True}
 
@@ -205,6 +264,7 @@ def create_app(store=None):
     async def report(id: str, request: Request):
         c = agent_auth(id, request)
         data = await request.json()
+        c = component(id)
         c.update(agent_state="running", last_seen=now(), observation=data["observation"])
         db().put("component", c)
         return {"ok": True}
@@ -215,19 +275,9 @@ def create_app(store=None):
             target = component(body.component_id)
             if target["environment_id"] != env_id or not target["enabled"]:
                 raise HTTPException(422, "Target must be enabled in this environment")
-            selected = [target]
-            ids = set(target["dependencies"])
-            selected += [c for c in available if c["id"] in ids or target["id"] in c["dependencies"]]
-        else:
-            words = set(body.question.lower().split())
-            selected = sorted(
-                available,
-                key=lambda c: len(words & set((c["name"] + " " + c["type"] + " " + c["description"]).lower().split())),
-                reverse=True,
-            )
-        return selected[:4]
+        return available
 
-    async def run_job(id, chosen, body, direct):
+    async def run_job(id, available, body, direct):
         def update(**fields):
             job = db().get("investigation", id)
             job.update(fields)
@@ -235,56 +285,219 @@ def create_app(store=None):
             return job
 
         results = []
+        limiter = asyncio.Semaphore(4)
+        baseline = {}
+        by_id = {}
+        incomplete = []
+        all_context = {}
+        observation_cache = {}
+
+        async def observation(client, c, args):
+            normalized = ObservationInput(**args).model_dump()
+            key = (c["id"], json.dumps(normalized, sort_keys=True))
+            if key not in observation_cache:
+                observation_cache[key] = asyncio.create_task(read_observation(client, c, normalized))
+            return await observation_cache[key]
+
+        async def read_observation(client, c, args):
+            async with limiter:
+                try:
+                    token = db().decrypt(component(c["id"])["encrypted_secrets"])["_agent_token"]
+                    async with asyncio.timeout(25):
+                        response = await client.post(
+                            f"http://infraaxon-agent-{c['id']}:8000/observations",
+                            headers={"Authorization": "Bearer " + token},
+                            json=args,
+                        )
+                        response.raise_for_status()
+                        return response.json()
+                except Exception as exc:
+                    return {
+                        "id": str(uuid4()),
+                        "component_id": c["id"],
+                        "source": c["type"],
+                        "action": args.get("action", "inspect"),
+                        "check_name": args.get("check_name", ""),
+                        "observed_at": now(),
+                        "ok": False,
+                        "duration_ms": 0,
+                        "data": json.dumps({"error": type(exc).__name__, "message": "Agent observation unavailable"}),
+                    }
+
+        async def base_probe(client, c):
+            ev = await observation(
+                client, c, {"time_window_minutes": body.time_window_minutes, "trace_id": body.trace_id}
+            )
+            baseline[c["id"]] = ev
+            p = resolve(c)
+            record = {
+                "component_id": c["id"],
+                "component": c["name"],
+                "agent_profile": p["id"],
+                "profile_version": p["version"],
+                "assessment": None,
+                "evidence": [ev],
+                "selected": False,
+            }
+            by_id[c["id"]] = record
+            results.append(record)
+            update(results=results)
+
         try:
             async with inference_lock:
-                update(status="running", started_at=now())
-                async with asyncio.timeout(600):
-                    for c in chosen:
-                        update(progress=f"Диагностика: {c['name']}")
-                        try:
-                            token = db().decrypt(c["encrypted_secrets"])["_agent_token"]
-                            async with httpx.AsyncClient(timeout=httpx.Timeout(570, connect=5)) as client:
-                                r = await client.post(
-                                    f"http://infraaxon-agent-{c['id']}:8000/diagnoses",
-                                    headers={"Authorization": "Bearer " + token},
-                                    json=body.model_dump(),
+                update(status="running", started_at=now(), progress="Сбор наблюдений без модели")
+                async with asyncio.timeout(1200), httpx.AsyncClient(timeout=httpx.Timeout(210, connect=5)) as client:
+                    # TaskGroup cancels outstanding probes before partial history is finalized.
+                    async with asyncio.TaskGroup() as probes:
+                        for c in available:
+                            probes.create_task(base_probe(client, c))
+                    ranked, skipped = rank_components(available, body.question, body.component_id, baseline, direct)
+                    chosen = [c for c, _ in ranked]
+                    for c, reason in ranked:
+                        by_id[c["id"]].update(selected=True, selection_reason=reason)
+                    update(
+                        results=results,
+                        selection=[
+                            {"component_id": c["id"], "component": c["name"], "reason": reason} for c, reason in ranked
+                        ],
+                        skipped_specialists=skipped,
+                        progress="Сбор профильных проверок и контекста",
+                    )
+                    requests, skipped_sources = context_requests(
+                        chosen, db().all("component"), body.question, body.time_window_minutes, body.trace_id
+                    )
+                    update(skipped_sources=skipped_sources)
+                    context_by_target = {c["id"]: [] for c in chosen}
+
+                    async def context_probe(item):
+                        async def retain(ev):
+                            all_context[ev["id"]] = ev
+                            for target in item["targets"]:
+                                if not any(old["id"] == ev["id"] for old in context_by_target[target]):
+                                    context_by_target[target].append(ev)
+                            if not ev["ok"]:
+                                incomplete.append(
+                                    {
+                                        "component_id": item["source"]["id"],
+                                        "reason": "Ошибка получения контекста",
+                                        "evidence_id": ev["id"],
+                                    }
                                 )
-                                r.raise_for_status()
-                                results.append(r.json())
-                        except Exception as exc:
-                            results.append(
-                                {
-                                    "component": c["name"],
-                                    "error": "Agent unavailable: " + type(exc).__name__,
-                                    "evidence": [],
-                                }
+                            update(context_evidence=list(all_context.values()), incomplete_reasons=incomplete)
+
+                        ev = await observation(client, item["source"], item["args"])
+                        await retain(ev)
+                        if item["source"]["type"] == "wikijs" and ev["ok"]:
+                            try:
+                                pages = (
+                                    json.loads(ev["data"])
+                                    .get("data", {})
+                                    .get("pages", {})
+                                    .get("search", {})
+                                    .get("results", [])
+                                )
+                                if pages:
+                                    page = await observation(
+                                        client,
+                                        item["source"],
+                                        {
+                                            "action": "read_page",
+                                            "page_id": int(pages[0]["id"]),
+                                            "time_window_minutes": body.time_window_minutes,
+                                        },
+                                    )
+                                    await retain(page)
+                            except (ValueError, KeyError, TypeError):
+                                incomplete.append(
+                                    {
+                                        "component_id": item["source"]["id"],
+                                        "reason": "Не удалось извлечь страницу из результата поиска",
+                                    }
+                                )
+                                update(incomplete_reasons=incomplete)
+
+                    async def required_probes(c):
+                        for check in resolve(c)["initial_checks"]:
+                            if check["action"] == "inspect":
+                                continue
+                            ev = await observation(
+                                client,
+                                c,
+                                {**check, "time_window_minutes": body.time_window_minutes, "trace_id": body.trace_id},
                             )
+                            by_id[c["id"]]["evidence"].append(ev)
+                            update(results=results)
+
+                    async with asyncio.TaskGroup() as probes:
+                        for item in requests:
+                            probes.create_task(context_probe(item))
+                        for c in chosen:
+                            probes.create_task(required_probes(c))
+                    for c in chosen:
+                        record = by_id[c["id"]]
+                        own_evidence = list(record["evidence"])
+                        record["evidence"] += context_by_target[c["id"]]
+                        update(results=results, progress=f"Диагностика: {c['name']}")
+                        try:
+                            token = db().decrypt(component(c["id"])["encrypted_secrets"])["_agent_token"]
+                            response = await client.post(
+                                f"http://infraaxon-agent-{c['id']}:8000/diagnoses",
+                                headers={"Authorization": "Bearer " + token},
+                                json={
+                                    **body.model_dump(),
+                                    "initial_evidence": own_evidence,
+                                    "context_evidence": context_by_target[c["id"]],
+                                },
+                            )
+                            response.raise_for_status()
+                            answer = response.json()
+                            record.update(answer)
+                        except Exception as exc:
+                            record["error"] = "Agent diagnosis unavailable: " + type(exc).__name__
                         update(results=results)
-                    evidence = [e for r in results for e in r.get("evidence", [])]
+                    specialists = [by_id[c["id"]] for c in chosen]
+                    assessment = None
                     if direct:
-                        assessment = results[0].get("assessment")
-                    elif evidence:
+                        assessment = specialists[0].get("assessment")
+                    elif any(r.get("assessment") for r in specialists):
                         update(progress="Сопоставление свидетельств")
-                        names = {c["id"]: c["name"] for c in db().all("component")}
+                        names = {c["id"]: c["name"] for c in available}
                         topology = [
-                            {
-                                "component": c["name"],
-                                "description": c["description"],
-                                "depends_on": [names.get(d, d) for d in c["dependencies"]],
-                            }
+                            {"component": c["name"], "depends_on": [names.get(d, d) for d in c["dependencies"]]}
                             for c in chosen
                         ]
-                        assessment = await synthesize(body.question, results, topology)
-                    else:
-                        assessment = None
-                    status = "completed" if assessment and not any(r.get("error") for r in results) else "partial"
-                    update(status=status, assessment=assessment, finished_at=now(), progress="Готово")
+                        assessment = await synthesize(body.question, specialists, topology)
+                    for record in specialists:
+                        if record.get("error"):
+                            incomplete.append({"component_id": record["component_id"], "reason": record["error"]})
+                        for ev in record["evidence"]:
+                            if not ev["ok"]:
+                                incomplete.append(
+                                    {
+                                        "component_id": ev["component_id"],
+                                        "reason": "Неуспешное наблюдение",
+                                        "evidence_id": ev["id"],
+                                    }
+                                )
+                    incomplete.extend(skipped_sources)
+                    update(
+                        status="completed" if assessment and not incomplete else "partial",
+                        assessment=assessment,
+                        results=results,
+                        incomplete_reasons=incomplete,
+                        finished_at=now(),
+                        progress="Готово",
+                    )
         except asyncio.CancelledError:
-            update(status="cancelled", finished_at=now(), results=results)
+            update(status="cancelled", finished_at=now(), results=results, context_evidence=list(all_context.values()))
             raise
         except Exception as exc:
             update(
-                status="partial" if results else "failed", error=type(exc).__name__, results=results, finished_at=now()
+                status="partial" if results else "failed",
+                error=type(exc).__name__,
+                results=results,
+                context_evidence=list(all_context.values()),
+                finished_at=now(),
             )
         finally:
             tasks.pop(id, None)
@@ -292,8 +505,6 @@ def create_app(store=None):
     def start(env_id, body, direct=False):
         environment(env_id)
         chosen = select(env_id, body)
-        if direct:
-            chosen = chosen[:1]
         if not chosen:
             raise HTTPException(422, "Activate at least one agent")
         id = str(uuid4())

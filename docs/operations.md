@@ -103,3 +103,17 @@ Build/test the C# projects under `examples/shop/backend`. A local distro SDK lac
 - Platform SQLite and source telemetry are independent. Loss of a source appears as missing evidence, not a healthy result.
 - Adapter read operations are bounded. Search scope is configured per component; do not grant broader backend permissions than needed.
 - Third-party services are separate containers with their own licenses. MinIO is built from the archived pinned upstream source release; this is a local example, not a production maintenance commitment.
+
+## Specialized agents
+
+See [Agent profiles](agent-profiles.md) for the complete 25-component inventory, configuration and acceptance checks. Preview and apply the full demo registration after deploying the current platform:
+
+```sh
+WITH_COLLABORATION=1 python tools/infraaxon.py register-shop --dry-run
+WITH_COLLABORATION=1 python tools/infraaxon.py register-shop
+docker exec -i infraaxon-platform-1 python < tools/check_agents.py
+```
+
+Registration preserves component IDs, credentials, history, extra components and operator settings. It adds missing default checks, profiles and links. Existing non-default profiles and descriptions are retained. Subsequent runs are idempotent. Disabling collaboration does not delete existing knowledge components.
+
+The console supports profile selection and separate context-source filters. Sources are restricted to the same environment. A direct question uses one specialist; an environment investigation uses at most six. The 20-minute deadline includes observation collection and synthesis. Cancellation, model failures and unavailable sources retain collected evidence.

@@ -53,4 +53,8 @@ def configured_store():
 
 
 def public_component(component):
-    return {k: v for k, v in component.items() if k != "encrypted_secrets"}
+    return {
+        "agent_profile": component.get("agent_profile") or component["type"],
+        "context_sources": [],
+        **{k: v for k, v in component.items() if k != "encrypted_secrets"},
+    }

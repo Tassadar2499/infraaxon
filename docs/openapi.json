@@ -89,6 +89,44 @@
         }
       }
     },
+    "/internal/diagnostics": {
+      "get": {
+        "summary": "Diagnostics",
+        "operationId": "diagnostics_internal_diagnostics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-profiles": {
+      "get": {
+        "summary": "Agent Profiles",
+        "operationId": "agent_profiles_api_agent_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentProfile"
+                  },
+                  "type": "array",
+                  "title": "Response Agent Profiles Api Agent Profiles Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/adapter-types": {
       "get": {
         "summary": "Adapters",
@@ -689,6 +727,72 @@
   },
   "components": {
     "schemas": {
+      "AgentProfile": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "instructions": {
+            "type": "string",
+            "title": "Instructions"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actions"
+          },
+          "initial_checks": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Initial Checks"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "type",
+          "name",
+          "instructions",
+          "keywords",
+          "actions",
+          "initial_checks",
+          "settings"
+        ],
+        "title": "AgentProfile"
+      },
       "ComponentInput": {
         "properties": {
           "name": {
@@ -743,6 +847,19 @@
             "type": "boolean",
             "title": "Enabled",
             "default": false
+          },
+          "agent_profile": {
+            "type": "string",
+            "title": "Agent Profile",
+            "default": ""
+          },
+          "context_sources": {
+            "items": {
+              "$ref": "#/components/schemas/ContextSource"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Context Sources"
           }
         },
         "type": "object",
@@ -752,6 +869,38 @@
           "endpoint"
         ],
         "title": "ComponentInput"
+      },
+      "ContextSource": {
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "title": "Component Id"
+          },
+          "service_name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Service Name",
+            "default": ""
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Query",
+            "default": ""
+          },
+          "check_name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Check Name",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "component_id"
+        ],
+        "title": "ContextSource"
       },
       "DiagnosisInput": {
         "properties": {

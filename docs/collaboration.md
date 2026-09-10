@@ -19,7 +19,7 @@ Bootstrap initializes only the containers named by this example. It creates synt
 
 Mattermost personal access tokens inherit the user's permissions, including posting; this is not a read-only token. InfraAxon's adapter exposes only ping and search, and never supplies the token to the model. Use a separate team/user when connecting real systems. Team membership and the configured channel bound the demonstration search.
 
-Wiki.js API keys expire after 365 days. To rotate a key, revoke it in Wiki.js, remove `WIKIJS_API_TOKEN` from the local `.env`, rerun bootstrap, then registration. Other credentials can also be rotated manually. Never publish `.env` or use the demo accounts for external systems.
+Wiki.js API keys expire after 365 days. To rotate a key, revoke it in Wiki.js, remove `WIKIJS_API_TOKEN` from the local `.env`, rerun bootstrap, then replace the saved token in the Wiki.js component’s Secrets field. Registration intentionally preserves existing connector secrets. Other credentials can also be rotated manually. Never publish `.env` or use the demo accounts for external systems.
 
 OpenProject allows `localhost:18083` and the internal `openproject` hostname. PostgreSQL extensions are installed in `pg_catalog`, which survives application schema initialization. A PostgreSQL 16 data volume cannot be mounted into PostgreSQL 17; this example uses a distinct `postgres17-data` volume.
 

@@ -3,10 +3,10 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen3:8b
       api_base: http://ollama:11434
-      timeout: 180
+      timeout: 360
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 litellm_settings:
   telemetry: false
   drop_params: true
-  request_timeout: 180
+  request_timeout: 360

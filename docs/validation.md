@@ -52,3 +52,27 @@ python3 tools/evaluate.py
 For browser checks, install the matching Chromium with `npx playwright install chromium` in `web`, then run `npm test` with the local `PLATFORM_KEY` in the process environment. These tests require the running demonstration and should not be aimed at external systems. Raw evaluation results are written to gitignored `artifacts/`; no credentials are included in published reports.
 
 This small experiment does not establish an accuracy percentage, false-positive rate, production reliability or comparative model ranking. Multi-agent investigations can take several minutes on CPU. Pin the model digest and repeat representative cases before making such claims.
+
+## Specialized profiles acceptance — 2026-09-10
+
+The full local stack was upgraded in place with 25 registered profiles. Additional components in other environments, component IDs, connector secrets and investigation history were retained. A pre-upgrade SQLite snapshot is stored in the platform data volume. A repeat registration preview reported no changes.
+
+- Python regression suite: 52 passed, including profile compatibility, legacy API updates, context scoping/deduplication, routing, cancellation, unknown Kafka offsets, Redis counter resets and read-only Wiki.js page retrieval.
+- C# suite: 8 passed in the official .NET 10 SDK image; Orders image built with the new outbox diagnostics endpoint. The host distro SDK lacked framework pruning metadata.
+- Console and storefront production builds passed. In-app browser verification confirmed Orders profile selection, six editable context links, successful save and no console errors.
+- Actual agent endpoints: 42 mandatory operations passed across all 25 components.
+- Existing shop integration smoke: 8 passed, including pricing/idempotency, Redis fallback, durable outbox recovery and worker pause/recovery.
+- New observation scenarios: all eight passed — Redis/S3 access outage, MongoDB latency, Kafka outage with outbox count/age, paused worker with positive lag, missing Prometheus/Elasticsearch and idle worker with zero lag. All faults were reset and the mandatory agent checks passed again.
+- Additional API checks verified OpenProject work-package activity reading and nonempty exact service filters for Catalog, Orders and Worker logs. Live Elasticsearch uses dynamic text+keyword fields while historical demo events use keyword fields; the adapter now handles both mappings.
+
+The first real-model Worker run (113 seconds) produced valid JSON/evidence references but incorrectly inferred no orders in the entire window from an empty log search and speculated about MongoDB latency. This led to the Elasticsearch mapping fix and Worker profile v2. A subsequent Worker v2 assessment no longer made that delay claim. These observations are individual examples, not a measured accuracy guarantee. Full redacted run artifacts are in the ignored `artifacts/` directory.
+
+The six-specialist environment run obtained valid assessments from Worker, Kafka, MongoDB, Logs, Prometheus and Mattermost. Its first final-synthesis attempt hit the 180-second model HTTP timeout; the partial investigation and all observations were retained. The synthesis prompt was then compacted and its output budget reduced; the same saved specialist results were used for a separate replay rather than relabelling the original run.
+
+A real local LiteLLM outage test retained observations for all 25 components plus eight context observations, including successfully read Wiki.js content. It returned `partial` with a model `ConnectError`; LiteLLM was restarted in `finally` and readiness was verified. All 25 components subsequently had fresh successful heartbeats.
+
+The compact replay also hit the original 180-second upstream limit. Ollama logs confirmed cancellation at that boundary; both LiteLLM and the synthesis client were aligned to a 360-second synthesis budget, while specialist budgets remain 150 seconds and the enclosing investigation deadline remains 20 minutes.
+
+With the longer upstream budget, one replay returned an empty JSON object. Final-generation requests now supply the actual Assessment JSON Schema (supported by the pinned Ollama adapter), and synthesis gets one bounded schema/reference repair attempt. Regression tests cover both the schema request and repair path.
+
+The final replay with the schema completed in 61.8 seconds and returned a valid assessment with existing evidence references. Its semantic review still found unsupported claims: it suggested that Elasticsearch yellow status could affect metrics collection and order processing, repeated historical MongoDB concerns without current supporting measurements, and requested Kafka lag data already present in the evidence. Therefore this run passes transport/schema/reference validation but does **not** pass diagnostic-content acceptance. The local Qwen3 8B model remains an advisory source; the raw observations and this limitation are retained. The original six-specialist investigation remains partial in history, and the separate replay is recorded in `artifacts/profile-synthesis-replay.json`.

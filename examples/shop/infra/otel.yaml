@@ -3,6 +3,8 @@ receivers:
     protocols:
       grpc: {endpoint: '0.0.0.0:4317'}
       http: {endpoint: '0.0.0.0:4318'}
+extensions:
+  health_check: {endpoint: '0.0.0.0:13133'}
 processors:
   batch: {}
 exporters:
@@ -13,7 +15,15 @@ exporters:
     mapping: {mode: ecs}
   prometheus:
     endpoint: '0.0.0.0:8889'
+    resource_to_telemetry_conversion: {enabled: true}
 service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus: {host: '0.0.0.0', port: 8888}
   pipelines:
     logs: {receivers: [otlp], processors: [batch], exporters: [elasticsearch]}
     traces: {receivers: [otlp], processors: [batch], exporters: [elasticsearch]}
